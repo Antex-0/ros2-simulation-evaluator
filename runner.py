@@ -4,61 +4,91 @@ import os
 import signal
 import sys
 
-def run_simulation(user_node_path, duration=15):
-    """
-    Launches Gazebo and the user's ROS2 node in a headless environment.
+def run_sim(node_path):
+    print('--- SIMULATION RUNNER STARTING ---')
 
-    1. Starts Xvfb (Virtual Monitor).
-    2. Launches Gazebo.
-    3. Runs the user's Python script.
-    4. Cleans up processes after the duration ends.
+    # 1. Setup Environment Variables
+    # PYTHONUNBUFFERED=1 is crucial. It forces Python to print logs immediately
+    # instead of holding them in memory (which causes empty log files).
+    env = os.environ.copy()
+    env['DISPLAY'] = ':99'
+    env['PYTHONUNBUFFERED'] = '1'
 
-    :param user_node_path: Path to the python script to run.
-    :param duration: How long (in seconds) to run the simulation.
-    """
-    # ... existing code ...
-    print("Starting simulation...")
-    # Setup the Virtual Environment
-    display_port = ":99"
-    os.environ['DISPLAY'] = display_port
-    
-    print(f"1. Starting Virtual Display on {display_port}...")
-    xvfb_process = subprocess.Popen(['Xvfb', display_port, '-screen', '0', '1024x768x24'], stdout = subprocess.PIPE, stderr = subprocess.DEVNULL)
-    time.sleep(2)  # Give some time for Xvfb to start
-    
-    # 2. Launch Gazebo Simulator
-    print("2. Launching Gazebo Simulator...")
-    gazebo_cmd =['ros2', 'launch', 'gazebo_ros', 'gazebo.launch.py']
-    gazebo_process = subprocess.Popen(gazebo_cmd, stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL, preexec_fn = os.setsid)
-    time.sleep(5)  # Give some time for Gazebo to start
-    
-    # 3. Launch User Node
-    print(f"3. Launching User Node from {user_node_path}...")
-    log_file = open('simulation_log.txt', 'w')
-    
-    # Assuming user_node_path is a Python script for ROS2 node
-    user_process = subprocess.Popen([ sys.executable, user_node_path], stdout = log_file, stderr = log_file, preexec_fn=os.setsid)
-    
-    # 4. Run for specified duration
-    print(f"4. Running simulation for {duration} seconds...")
-    time.sleep(duration)
-    
-    # 5. Cleanup
-    print("5. Cleaning up...")
-    os.killpg(os.getpgid(user_process.pid), signal.SIGTERM) # Terminate user process group
-    os.killpg(os.getpgid(gazebo_process.pid), signal.SIGTERM)  # Terminate gazebo process group
+    # 2. Start Virtual Monitor (Xvfb)
+    print('1. Starting Xvfb (Virtual Monitor)...')
+    xvfb = subprocess.Popen(
+        ['Xvfb', ':99', '-screen', '0', '1024x768x24'],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    time.sleep(2) # Wait for it to initialize
 
-    xvfb_process.terminate()  # Terminate Xvfb process
-    log_file.close()
+    # 3. Start Gazebo
+    print('2. Starting Gazebo...')
+    # os.setsid creates a new process group so we can kill Gazebo cleanly later
+    gz = subprocess.Popen(
+        ['ros2', 'launch', 'gazebo_ros', 'gazebo.launch.py'],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        preexec_fn=os.setsid,
+        env=env
+    )
+    time.sleep(5) # Wait for Gazebo to load
+
+    # 4. Run User Node (With Logging)
+    print(f'3. Running User Node: {node_path}...')
     
-    print("Simulation ended. Logs are saved in simulation_log.txt")
+    with open('simulation_log.txt', 'w') as log_file:
+        # Write a header to verify file permissions work
+        log_file.write(f'--- SIMULATION LOG START ---\n')
+        log_file.write(f'Target Node: {node_path}\n')
+        log_file.flush() # Force write to disk immediately
+
+        user_process = None
+        try:
+            # Run the node using python3 -u (Unbuffered mode)
+            user_process = subprocess.Popen(
+                [sys.executable, '-u', node_path],
+                stdout=log_file,
+                stderr=log_file,
+                preexec_fn=os.setsid,
+                env=env
+            )
+
+            # Let it run for 15 seconds
+            print('   -> Simulation running for 15s...')
+            time.sleep(15)
+
+        except Exception as e:
+            log_file.write(f'\nCRITICAL RUNNER ERROR: {str(e)}\n')
+        finally:
+            print('4. Stopping processes...')
+            # Kill the user node group if it exists
+            if user_process:
+                try:
+                    os.killpg(os.getpgid(user_process.pid), signal.SIGTERM)
+                except:
+                    pass
+
+            # Kill the Gazebo group
+            try:
+                os.killpg(os.getpgid(gz.pid), signal.SIGTERM)
+            except:
+                pass
+
+    # Kill Xvfb
+    xvfb.terminate()
+    print('--- SIMULATION COMPLETE ---')
+
+if __name__ == '__main__':
+    # Accept the node path as an argument (passed from app.py)
+    # Default to 'my_node.py' if no argument provided
+    target_node = sys.argv[1] if len(sys.argv) > 1 else 'my_node.py'
     
-if __name__ == "__main__":
-    # Example usage
-    test_node = "my_node.py"  # Replace with actual user node script path
-    
-    # Check if the user node script exists
-    if not os.path.isfile(test_node):
-        print(f"Error: The specified user node script '{test_node}' does not exist.")
+    if os.path.exists(target_node):
+        run_sim(target_node)
     else:
-        run_simulation(test_node, duration = 15)
+        print(f"Error: Node file '{target_node}' not found.")
+        # Create a dummy log so the website shows the error
+        with open('simulation_log.txt', 'w') as f:
+            f.write(f"Error: Could not run simulation.\nFile '{target_node}' does not exist.")

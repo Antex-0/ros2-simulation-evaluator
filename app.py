@@ -4,7 +4,6 @@ import json
 import sys
 from flask import Flask, render_template, request, jsonify
 
-# template_folder="." makes it look in the current folder for index.html
 app = Flask(__name__, template_folder=".")
 
 UPLOAD_FOLDER = "uploads"
@@ -23,32 +22,28 @@ def upload_file():
     if file.filename == "":
         return jsonify({"error": "No file selected"})
     
-    # 1. FORCE DELETE OLD FILE
-    # This guarantees we don't accidentally check an old file
+    # Force clean up old files
     zip_name = "user_upload.zip"
     if os.path.exists(zip_name):
-        try:
-            os.remove(zip_name)
-        except:
-            pass
-    
-    # 2. SAVE NEW FILE
+        os.remove(zip_name)
+    if os.path.exists("simulation_log.txt"):
+        os.remove("simulation_log.txt")
+
     file.save(zip_name)
     
     try:
-        # 3. RUN CHECKER (Passing the specific filename)
+        # Run checker
         result = subprocess.run(
             [sys.executable, "checker.py", zip_name], 
             capture_output=True, 
             text=True
         )
         
-        # 4. RETURN REPORT
         if os.path.exists("report.json"):
             with open("report.json", "r") as f:
                 return jsonify(json.load(f))
         else:
-            return jsonify({"error": "No report found", "logs": result.stdout})
+            return jsonify({"error": "No report found", "details": result.stdout})
             
     except Exception as e:
         return jsonify({"error": str(e)})
@@ -56,15 +51,36 @@ def upload_file():
 @app.route("/run_sim", methods=["POST"])
 def run_sim():
     try:
-        # Run the runner script
-        result = subprocess.run([sys.executable, "runner.py"], capture_output=True, text=True)
+        # 1. Find the extracted node file
+        # The checker extracts files to /tmp/ros_extraction. We need to find the python script there.
+        extract_path = "/tmp/ros_extraction"
+        node_file = None
         
-        log = "No logs."
+        if os.path.exists(extract_path):
+            for root, dirs, files in os.walk(extract_path):
+                for f in files:
+                    if f.endswith(".py") and f != "setup.py":
+                        node_file = os.path.join(root, f)
+                        break
+                if node_file: break
+        
+        if not node_file:
+            return jsonify({"error": "No Python node found in extracted package."})
+
+        # 2. Run runner.py with the node file argument
+        result = subprocess.run(
+            [sys.executable, "runner.py", node_file],
+            capture_output=True,
+            text=True
+        )
+        
+        # 3. Read logs
+        log_content = "No logs generated."
         if os.path.exists("simulation_log.txt"):
             with open("simulation_log.txt", "r") as f:
-                log = f.read()
+                log_content = f.read()
                 
-        return jsonify({"status": "Done", "logs": log})
+        return jsonify({"status": "Done", "logs": log_content})
     except Exception as e:
         return jsonify({"error": str(e)})
 
