@@ -1,0 +1,10 @@
+ ```text
+    __pycache__/
+    uploads/
+    temp_extracted/
+    *.zip
+    simulation_log.txt
+    report.json
+    .vscode/
+    docs/build/
+    ```
