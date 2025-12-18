@@ -7,4 +7,15 @@
     report.json
     .vscode/
     docs/build/
-    ```
+    .venv/
+__pycache__/
+temp_extracted/
+*.json
+*.xml
+*.py
+!app.py
+!checker.py
+!runner.py
+!make_zip.py
+!create_good_zip.py
+    ```.venv/ 
